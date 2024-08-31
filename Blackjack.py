@@ -1,6 +1,7 @@
 import pygame
 import sys
 import random
+import math
 from typing import List, Optional, Tuple
 from enum import Enum
 
@@ -19,12 +20,14 @@ FPS = 60
 # Colors
 BLACK = (0, 0, 0)
 WHITE = (255, 255, 255)
-GREEN = (0, 128, 0)
-RED = (255, 0, 0)
-BLUE = (0, 0, 255)
+GREEN = (0, 100, 0)
+RED = (220, 0, 0)
+BLUE = (0, 0, 220)
+GOLD = (255, 215, 0)
 
 # Fonts
 FONT = pygame.font.Font(None, 36)
+CARD_FONT = pygame.font.Font(None, 50)
 
 class Suit(Enum):
     HEARTS = "H"
@@ -52,22 +55,41 @@ class Card:
         self.suit = suit
         self.rank = rank
         self.image = self.load_image()
+        self.pos = (0, 0)
+        self.target_pos = (0, 0)
+        self.angle = 0
+        self.target_angle = 0
 
     def load_image(self) -> pygame.Surface:
         surface = pygame.Surface((CARD_WIDTH, CARD_HEIGHT))
         surface.fill(WHITE)
         pygame.draw.rect(surface, BLACK, surface.get_rect(), 2)
         
-        rank_text = FONT.render(self.rank.name, True, BLACK)
-        suit_text = FONT.render(self.suit.value, True, RED if self.suit in [Suit.HEARTS, Suit.DIAMONDS] else BLACK)
+        rank_text = CARD_FONT.render(self.rank.name[0], True, BLACK)
+        suit_text = CARD_FONT.render(self.suit.value, True, RED if self.suit in [Suit.HEARTS, Suit.DIAMONDS] else BLACK)
         
-        surface.blit(rank_text, (5, 5))
-        surface.blit(suit_text, (CARD_WIDTH - 25, CARD_HEIGHT - 35))
+        surface.blit(rank_text, (10, 10))
+        surface.blit(suit_text, (CARD_WIDTH - 30, CARD_HEIGHT - 40))
+        
+        # Add some decoration
+        pygame.draw.rect(surface, GOLD, (5, 5, CARD_WIDTH - 10, CARD_HEIGHT - 10), 2)
         
         return surface
 
     def get_value(self) -> int:
         return min(self.rank.value, 10)
+
+    def update(self):
+        # Smoothly move the card to its target position
+        self.pos = (self.pos[0] * 0.9 + self.target_pos[0] * 0.1,
+                    self.pos[1] * 0.9 + self.target_pos[1] * 0.1)
+        # Smoothly rotate the card to its target angle
+        self.angle = self.angle * 0.9 + self.target_angle * 0.1
+
+    def draw(self, screen):
+        rotated_image = pygame.transform.rotate(self.image, self.angle)
+        new_rect = rotated_image.get_rect(center=self.image.get_rect(topleft=self.pos).center)
+        screen.blit(rotated_image, new_rect.topleft)
 
 class Deck:
     def __init__(self):
@@ -111,15 +133,21 @@ class Button:
         self.rect = pygame.Rect(x, y, width, height)
         self.text = text
         self.color = color
+        self.hover = False
 
     def draw(self, surface: pygame.Surface) -> None:
-        pygame.draw.rect(surface, self.color, self.rect)
+        color = [min(c + 20, 255) if self.hover else c for c in self.color]
+        pygame.draw.rect(surface, color, self.rect, border_radius=10)
+        pygame.draw.rect(surface, BLACK, self.rect, 2, border_radius=10)
         text_surface = FONT.render(self.text, True, WHITE)
         text_rect = text_surface.get_rect(center=self.rect.center)
         surface.blit(text_surface, text_rect)
 
     def is_clicked(self, pos: Tuple[int, int]) -> bool:
         return self.rect.collidepoint(pos)
+
+    def update(self, mouse_pos):
+        self.hover = self.rect.collidepoint(mouse_pos)
 
 class BlackjackGame:
     def __init__(self):
@@ -138,7 +166,14 @@ class BlackjackGame:
 
         self.game_state = "betting"
         self.message = "Enter bet amount:"
-        self.debug_info = ""
+
+        # Background
+        self.background = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT))
+        self.background.fill(GREEN)
+        for i in range(20):
+            start_pos = (random.randint(0, SCREEN_WIDTH), random.randint(0, SCREEN_HEIGHT))
+            end_pos = (random.randint(0, SCREEN_WIDTH), random.randint(0, SCREEN_HEIGHT))
+            pygame.draw.line(self.background, (0, 80, 0), start_pos, end_pos, 2)
 
     def run(self) -> None:
         while True:
@@ -178,19 +213,31 @@ class BlackjackGame:
             self.message += event.unicode
 
     def update(self) -> None:
+        mouse_pos = pygame.mouse.get_pos()
+        self.hit_button.update(mouse_pos)
+        self.stand_button.update(mouse_pos)
+        self.deal_button.update(mouse_pos)
+
         if self.game_state == "dealing":
             self.deal_initial_cards()
         elif self.game_state == "dealer_turn":
             self.dealer_turn()
 
-        self.debug_info = f"Game State: {self.game_state}, Player Cards: {len(self.player.hand)}, Dealer Cards: {len(self.dealer.hand)}"
+        for player in [self.player, self.dealer]:
+            for i, card in enumerate(player.hand):
+                if player.is_dealer:
+                    card.target_pos = (50 + i * 30, 50)
+                else:
+                    card.target_pos = (50 + i * 30, SCREEN_HEIGHT - 250)
+                card.target_angle = random.uniform(-5, 5)
+                card.update()
 
     def draw(self) -> None:
-        self.screen.fill(GREEN)
+        self.screen.blit(self.background, (0, 0))
         
         # Draw hands
-        self.draw_hand(self.player.hand, 50, SCREEN_HEIGHT - 250)
-        self.draw_hand(self.dealer.hand, 50, 50, self.game_state != "dealer_turn")
+        self.draw_hand(self.player.hand)
+        self.draw_hand(self.dealer.hand, self.game_state != "dealer_turn")
 
         # Draw buttons
         if self.game_state == "player_turn":
@@ -203,17 +250,17 @@ class BlackjackGame:
         self.draw_text(f"Player Chips: {self.player.chips}", 110, 10)
         self.draw_text(f"Current Bet: {self.bet}", 83, 40)
         self.draw_text(self.message, SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2)
-        self.draw_text(self.debug_info, SCREEN_WIDTH // 2, SCREEN_HEIGHT - 20)
 
         pygame.display.flip()
 
-    def draw_hand(self, hand: List[Card], x: int, y: int, hide_first: bool = False) -> None:
+    def draw_hand(self, hand: List[Card], hide_first: bool = False) -> None:
         for i, card in enumerate(hand):
             if i == 0 and hide_first:
                 # Draw card back
-                pygame.draw.rect(self.screen, BLUE, (x, y, CARD_WIDTH, CARD_HEIGHT))
+                pygame.draw.rect(self.screen, BLUE, (*card.pos, CARD_WIDTH, CARD_HEIGHT), border_radius=5)
+                pygame.draw.rect(self.screen, GOLD, (*card.pos, CARD_WIDTH, CARD_HEIGHT), 2, border_radius=5)
             else:
-                self.screen.blit(card.image, (x + i * 30, y))
+                card.draw(self.screen)
 
     def draw_text(self, text: str, x: int, y: int) -> None:
         text_surface = FONT.render(text, True, WHITE)
@@ -243,13 +290,19 @@ class BlackjackGame:
 
     def deal_initial_cards(self) -> None:
         for _ in range(2):
-            self.player.add_card(self.deck.deal())
-            self.dealer.add_card(self.deck.deal())
+            self.deal_card(self.player)
+            self.deal_card(self.dealer)
         self.game_state = "player_turn"
         self.message = "Your turn: Hit or Stand?"
 
+    def deal_card(self, player: Player) -> None:
+        card = self.deck.deal()
+        if card:
+            card.pos = (SCREEN_WIDTH // 2, 0)  # Start from the top center
+            player.add_card(card)
+
     def player_hit(self) -> None:
-        self.player.add_card(self.deck.deal())
+        self.deal_card(self.player)
         if self.player.get_hand_value() > 21:
             self.message = "You busted! Dealer wins."
             self.player.chips -= self.bet
@@ -262,9 +315,10 @@ class BlackjackGame:
         self.message = "Dealer's turn..."
 
     def dealer_turn(self) -> None:
-        while self.dealer.get_hand_value() < 17:
-            self.dealer.add_card(self.deck.deal())
-        self.determine_winner()
+        if self.dealer.get_hand_value() < 17:
+            self.deal_card(self.dealer)
+        else:
+            self.determine_winner()
 
     def determine_winner(self) -> None:
         player_value = self.player.get_hand_value()
